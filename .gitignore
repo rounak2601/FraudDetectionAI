@@ -1,0 +1,8 @@
+﻿env/
+__pycache__/
+*.pyc
+*.pyo
+.env
+fraud-feature-eng-data/
+models/artifacts/
+mlruns/
