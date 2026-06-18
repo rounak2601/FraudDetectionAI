@@ -1,8 +1,39 @@
-﻿env/
+﻿# Python
+env/
+venv/
 __pycache__/
 *.pyc
 *.pyo
-.env
-fraud-feature-eng-data/
+*.pyd
+.Python
+
+# Data files
+data/train_transaction.csv
+data/*.csv
+
+# Model artifacts (too large for GitHub)
 models/artifacts/
+
+# Database
+*.db
+mlflow.db
 mlruns/
+
+# Environment
+.env
+
+# Node
+frontend/node_modules/
+
+# Build
+frontend/build/
+
+# Faust data
+fraud-feature-eng-data/
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
