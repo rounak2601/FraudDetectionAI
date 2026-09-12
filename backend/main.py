@@ -6,7 +6,7 @@ from sqlalchemy import func
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database import create_tables, engine, wait_for_database
-from backend.routers import cases, models, transactions
+from backend.routers import cases, compliance, models, transactions
 
 
 def _cors_origins() -> list[str]:
@@ -57,6 +57,7 @@ app.add_middleware(
 app.include_router(transactions.router, prefix="/api/transactions", tags=["Transactions"])
 app.include_router(cases.router, prefix="/api/cases", tags=["Cases"])
 app.include_router(models.router, prefix="/api/models", tags=["Models"])
+app.include_router(compliance.router, prefix="/api/compliance", tags=["Compliance"])
 
 
 @app.get("/")
