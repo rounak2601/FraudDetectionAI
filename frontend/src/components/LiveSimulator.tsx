@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from '../api/client';
 
 // Realistic transaction scenarios with varied risk levels
@@ -125,10 +125,11 @@ interface LiveSimulatorProps {
 const LiveSimulator: React.FC<LiveSimulatorProps> = ({ onNewTransaction }) => {
   const [count, setCount]     = useState(0);
   const [lastRisk, setLastRisk] = useState('');
-  const [status, setStatus]   = useState<'ok' | 'error' | 'connecting'>('connecting');
+  const [status, setStatus] = useState<'idle' | 'ok' | 'error' | 'connecting'>('idle');
+  const [running, setRunning] = useState(true);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const sendTransaction = async () => {
+  const sendTransaction = useCallback(async () => {
     const scenario = POOL[Math.floor(Math.random() * POOL.length)];
     // Add ±15% random variation to amount so each transaction looks different
     const tx = {
@@ -140,26 +141,32 @@ const LiveSimulator: React.FC<LiveSimulatorProps> = ({ onNewTransaction }) => {
     };
 
     try {
-      await api.post('/api/transactions/score', tx);
+      const response = await api.post('/api/transactions/score', tx);
       setCount(c => c + 1);
-      setLastRisk(scenario.label);
+      setLastRisk(response.data.risk_level || scenario.label);
       setStatus('ok');
       if (onNewTransaction) onNewTransaction();
     } catch {
       setStatus('error');
     }
-  };
+  }, [onNewTransaction]);
 
   useEffect(() => {
-    // Start immediately, then every 5 seconds
+    if (!running) {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      setStatus('idle');
+      return;
+    }
+    setStatus('connecting');
     sendTransaction();
     intervalRef.current = setInterval(sendTransaction, 5000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []);
+  }, [running, sendTransaction]);
 
-  const dotColor = status === 'ok' ? '#3fb950'
+  const dotColor = status === 'idle' ? '#8b949e' : status === 'ok' ? '#3fb950'
                  : status === 'error' ? '#f85149' : '#d29922';
   const riskColor = lastRisk === 'CRITICAL' ? '#f85149'
                   : lastRisk === 'HIGH' ? '#f0883e'
@@ -179,7 +186,7 @@ const LiveSimulator: React.FC<LiveSimulatorProps> = ({ onNewTransaction }) => {
         animation: 'pulse 1.5s infinite'
       }}/>
       <span style={{ color: dotColor, fontWeight: 700 }}>
-        {status === 'ok' ? 'LIVE' : status === 'error' ? 'ERROR' : 'CONNECTING'}
+        {status === 'idle' ? 'STOPPED' : status === 'ok' ? 'LIVE' : status === 'error' ? 'ERROR' : 'CONNECTING'}
       </span>
       <span style={{ color: '#484f58' }}>·</span>
       <span style={{ color: '#8b949e' }}>{count} sent</span>
@@ -194,7 +201,17 @@ const LiveSimulator: React.FC<LiveSimulatorProps> = ({ onNewTransaction }) => {
           }}>{lastRisk}</span>
         </>
       )}
-      <span style={{ color: '#484f58' }}>· Every 5s · Mix of LOW/MEDIUM/CRITICAL</span>
+      <span style={{ color: '#484f58' }}>· Every 5s while enabled</span>
+      <button
+        onClick={() => setRunning(value => !value)}
+        style={{
+          marginLeft: 'auto', background: running ? '#2e1a1a' : '#0a1e0a',
+          color: running ? '#f85149' : '#3fb950', border: '1px solid currentColor',
+          borderRadius: '4px', padding: '4px 10px', cursor: 'pointer'
+        }}
+      >
+        {running ? 'Stop Feed' : 'Start Demo Feed'}
+      </button>
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
     </div>
   );

@@ -231,7 +231,7 @@ async def score_transaction(
             fraud_score        = fraud_probability,
             xgboost_score      = xgboost_score,
             isolation_score    = isolation_score,
-            is_fraud_predicted = fraud_probability >= 0.5,
+            is_fraud_predicted = result.is_fraud_predicted,
             risk_level         = risk_level,
             shap_values        = json.dumps({}),
             llm_explanation    = "",
@@ -240,14 +240,14 @@ async def score_transaction(
         db.add(db_tx)
         db.commit()
 
-        # Start SHAP in background (LLM is queued inside _background_shap)
-        t = threading.Thread(
-            target=_background_shap,
-            args=(tx_dict["transaction_id"], tx_dict,
-                  fraud_probability, explainer),
-            daemon=True
-        )
-        t.start()
+        # Explain asynchronously; scoring remains available when Ollama is offline.
+        if explainer is not None:
+            t = threading.Thread(
+                target=_background_shap,
+                args=(tx_dict["transaction_id"], tx_dict, fraud_probability, explainer),
+                daemon=True,
+            )
+            t.start()
 
         return {
             "transaction_id":    tx_dict["transaction_id"],
@@ -256,6 +256,7 @@ async def score_transaction(
             "xgboost_score":     xgboost_score,
             "isolation_score":   isolation_score,
             "triggered_rules":   triggered_rules,
+            "is_fraud_predicted": result.is_fraud_predicted,
             "shap_values":       {},
             "llm_explanation":   "Analyzing..."
         }
@@ -290,7 +291,12 @@ async def get_recent_transactions(
 
 
 @router.post("/{transaction_id}/explain")
-async def generate_explanation(transaction_id: str, db: Session = Depends(get_db)):
+async def generate_explanation(
+    transaction_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    tx = None
     try:
         tx = db.query(Transaction)\
             .filter(Transaction.transaction_id == transaction_id).first()
@@ -300,11 +306,9 @@ async def generate_explanation(transaction_id: str, db: Session = Depends(get_db
         if tx.llm_explanation and len(tx.llm_explanation) > 20:
             return {"explanation": tx.llm_explanation, "status": "already_exists"}
 
-        import sys
-        sys.path.insert(0, ".")
-        from explainability.explainer import FraudExplainer
-
-        explainer = FraudExplainer()
+        explainer = request.app.state.explainer
+        if explainer is None:
+            raise HTTPException(status_code=503, detail="Explanation service unavailable")
 
         tx_dict = {
             "transaction_id": tx.transaction_id,
@@ -342,8 +346,15 @@ async def generate_explanation(transaction_id: str, db: Session = Depends(get_db
 
         return {"explanation": narrative, "status": "generated"}
 
-    except Exception as e:
-        return {"explanation": f"Analysis complete. Fraud score: {tx.fraud_score:.1%}. Review triggered rules for details.", "status": "fallback"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        score = tx.fraud_score if tx is not None and tx.fraud_score is not None else 0.0
+        return {
+            "explanation": f"Analysis complete. Fraud score: {score:.1%}. Review triggered rules for details.",
+            "status": "fallback",
+            "error": str(exc),
+        }
 
 @router.get("/{transaction_id}")
 async def get_transaction(

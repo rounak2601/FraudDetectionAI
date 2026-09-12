@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 env/
 venv/
 __pycache__/
@@ -37,3 +37,8 @@ fraud-feature-eng-data/
 # Windows
 Thumbs.db
 Desktop.ini
+
+.runtime/
+_audit/
+
+backups/

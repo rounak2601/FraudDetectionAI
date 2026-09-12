@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Row, Col, message } from 'antd';
+import { message } from 'antd';
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, CartesianGrid, AreaChart, Area,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, AreaChart, Area,
 } from 'recharts';
 import {
   ThunderboltOutlined,
@@ -11,35 +10,87 @@ import {
   EyeOutlined,
   CheckCircleOutlined,
 } from '@ant-design/icons';
-import { getRecentTransactions } from '../api/client';
+import { getRecentTransactions, getMonitoringSummary, getModelHealth } from '../api/client';
 
 const Monitoring: React.FC = () => {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>(null);
+  const [models, setModels] = useState<any[]>([]);
 
   const fetchData = async () => {
     try {
-      const res = await getRecentTransactions(100);
-      const txs = res.data;
+      const [recent, metrics, modelHealth] = await Promise.all([
+        getRecentTransactions(100),
+        getMonitoringSummary(),
+        getModelHealth(),
+      ]);
+      const txs = recent.data;
       setTransactions(txs);
+      setSummary(metrics.data);
+      setModels(modelHealth.data.models || []);
 
-      const byMinute: Record<string, any> = {};
-      txs.forEach((tx: any) => {
-        const d = new Date(tx.created_at);
-        const key = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        if (!byMinute[key]) byMinute[key] = { time: key, total: 0, flagged: 0, avgScore: 0, scores: [] };
-        byMinute[key].total++;
-        if (tx.is_fraud_predicted) byMinute[key].flagged++;
-        byMinute[key].scores.push(tx.fraud_score * 100);
-      });
+      // Group transactions into 5-second buckets so the graph
+      // updates during live monitoring instead of once per minute.
+      const byBucket: Record<string, any> = {};
 
-      const chart = Object.values(byMinute).map((d: any) => ({
-        ...d,
-        avgScore: d.scores.length > 0
-          ? parseFloat((d.scores.reduce((a: number, b: number) => a + b, 0) / d.scores.length).toFixed(1))
-          : 0,
-        fraudRate: d.total > 0 ? parseFloat(((d.flagged / d.total) * 100).toFixed(1)) : 0,
-      })).slice(-20);
+      [...txs]
+        .sort((a: any, b: any) =>
+          new Date(a.created_at).getTime() -
+          new Date(b.created_at).getTime()
+        )
+        .forEach((tx: any) => {
+          const date = new Date(tx.created_at);
+
+          if (Number.isNaN(date.getTime())) return;
+
+          const bucketDate = new Date(
+            Math.floor(date.getTime() / 5000) * 5000
+          );
+
+          const key = bucketDate.toISOString();
+
+          if (!byBucket[key]) {
+            byBucket[key] = {
+              time: bucketDate.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              }),
+              total: 0,
+              flagged: 0,
+              avgScore: 0,
+              scores: [],
+            };
+          }
+
+          byBucket[key].total++;
+
+          if (tx.is_fraud_predicted) {
+            byBucket[key].flagged++;
+          }
+
+          byBucket[key].scores.push(Number(tx.fraud_score || 0) * 100);
+        });
+
+      const chart = Object.values(byBucket)
+        .map((d: any) => ({
+          ...d,
+          avgScore: d.scores.length > 0
+            ? parseFloat(
+                (
+                  d.scores.reduce(
+                    (a: number, b: number) => a + b,
+                    0
+                  ) / d.scores.length
+                ).toFixed(1)
+              )
+            : 0,
+          fraudRate: d.total > 0
+            ? parseFloat(((d.flagged / d.total) * 100).toFixed(1))
+            : 0,
+        }))
+        .slice(-20);
 
       setChartData(chart);
     } catch (err) {
@@ -49,18 +100,16 @@ const Monitoring: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    const interval = setInterval(fetchData, 5000);
     return () => clearInterval(interval);
   }, []);
 
-  const total = transactions.length;
-  const flagged = transactions.filter(t => t.is_fraud_predicted).length;
-  const cleared = total - flagged;
-  const fraudRate = total > 0 ? ((flagged / total) * 100).toFixed(1) : '0';
-  const avgScore = total > 0
-    ? (transactions.reduce((s: number, t: any) => s + t.fraud_score, 0) / total * 100).toFixed(1)
-    : '0';
-  const highRisk = transactions.filter(t => t.risk_level === 'HIGH' || t.risk_level === 'CRITICAL').length;
+  const total = summary?.total_scored ?? transactions.length;
+  const flagged = summary?.flagged ?? transactions.filter(t => t.is_fraud_predicted).length;
+  const cleared = summary?.cleared ?? (total - flagged);
+  const fraudRate = summary?.fraud_rate?.toFixed(1) ?? '0';
+  const avgScore = summary?.avg_score?.toFixed(1) ?? '0';
+  const highRisk = summary?.high_risk ?? transactions.filter(t => t.risk_level === 'HIGH' || t.risk_level === 'CRITICAL').length;
 
   const statCards = [
     { title: 'TOTAL SCORED', value: total, color: '#58a6ff', bg: '#0d1a2e', border: '#1a2744', icon: <ThunderboltOutlined /> },
@@ -252,15 +301,12 @@ const Monitoring: React.FC = () => {
         <div style={{
           padding: '16px',
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
           gap: '12px'
         }}>
-          {[
-            { name: 'XGBoost ONNX', status: 'ACTIVE', latency: '~2ms', color: '#3fb950', detail: 'IEEE-CIS Trained' },
-            { name: 'Isolation Forest', status: 'ACTIVE', latency: '~1ms', color: '#3fb950', detail: 'Anomaly Detection' },
-            { name: 'Meta Learner', status: 'ACTIVE', latency: '~1ms', color: '#3fb950', detail: 'Ensemble Combiner' },
-            { name: 'GNN GraphSAGE', status: 'ACTIVE', latency: '~5ms', color: '#3fb950', detail: 'Neo4j Subgraph' },
-          ].map((model, i) => (
+          {models.map((model, i) => {
+            const color = model.status === 'ACTIVE' ? '#3fb950' : '#d29922';
+            return (
             <div key={i} style={{
               background: '#0a1628',
               border: '1px solid #1a2744',
@@ -270,23 +316,21 @@ const Monitoring: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                 <span style={{ color: '#e6edf3', fontSize: '12px', fontWeight: '600' }}>{model.name}</span>
                 <span style={{
-                  color: model.color,
+                  color,
                   fontSize: '9px',
                   fontWeight: '700',
                   background: '#0a1e0a',
                   padding: '1px 6px',
                   borderRadius: '4px',
-                  border: `1px solid ${model.color}40`
+                  border: `1px solid ${color}40`
                 }}>
                   {model.status}
                 </span>
               </div>
               <div style={{ color: '#484f58', fontSize: '10px' }}>{model.detail}</div>
-              <div style={{ color: '#58a6ff', fontSize: '10px', marginTop: '4px' }}>
-                Latency: {model.latency}
-              </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

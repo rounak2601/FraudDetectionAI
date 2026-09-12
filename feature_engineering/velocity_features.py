@@ -1,7 +1,8 @@
+import os
 import redis
 import time
 
-r = redis.Redis.from_url('redis://localhost:6379', decode_responses=True)
+r = redis.Redis.from_url(os.getenv('REDIS_URL', 'redis://127.0.0.1:6379/0'), decode_responses=True)
 
 async def compute_velocity_features(tx):
     acct = tx['account_id']

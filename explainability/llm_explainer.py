@@ -28,6 +28,7 @@ FALLBACK:
   explanation built directly from SHAP values.  Never crashes.
 """
 
+import os
 import httpx
 from typing import Any, Dict
 
@@ -43,26 +44,25 @@ class LLMExplainer:
         host:    str = "http://localhost:11434",
         timeout: int = 25,          # seconds — LLM on CPU needs time
     ):
-        self.model   = model
-        self.host    = host.rstrip("/")
+        self.model = os.getenv("OLLAMA_MODEL", model)
+        self.host = os.getenv("OLLAMA_URL", host).rstrip("/")
         self.timeout = timeout
-
-        print(f"  [LLMExplainer] Connecting to Ollama at {self.host}...")
-        self._verify_connection()
-        print(f"  [LLMExplainer] Ready. Model: {self.model}")
+        self.available = self._verify_connection()
+        status = "available" if self.available else "optional/fallback mode"
+        print(f"  [LLMExplainer] {status}. Model: {self.model}")
 
     # ──────────────────────────────────────────────────────
-    def _verify_connection(self):
-        """Check Ollama is running. Raise a clear error if not."""
+    def _verify_connection(self) -> bool:
+        """Check Ollama without making ML scoring depend on it."""
         try:
-            r = httpx.get(f"{self.host}/api/tags", timeout=5)
-            r.raise_for_status()
-        except Exception:
-            raise RuntimeError(
-                "\n\nCannot connect to Ollama at http://localhost:11434\n"
-                "Fix: open a NEW PowerShell window and run:  ollama serve\n"
-                "Then re-run this script.\n"
-            )
+            response = httpx.get(f"{self.host}/api/tags", timeout=2)
+            response.raise_for_status()
+            return True
+        except Exception as exc:
+            if os.getenv("OLLAMA_REQUIRED", "false").lower() == "true":
+                raise RuntimeError(f"Ollama is required but unavailable at {self.host}: {exc}") from exc
+            print(f"  [LLMExplainer] Ollama unavailable at {self.host}; using fallback narratives.")
+            return False
 
     # ──────────────────────────────────────────────────────
     def _build_prompt(
@@ -156,6 +156,9 @@ Start directly with the explanation."""
         Returns:
             str: 2-sentence explanation for fraud analysts
         """
+
+        if not self.available:
+            return self._fallback_explanation(shap_results, fraud_probability)
 
         # Safety check — never block the pipeline
         try:

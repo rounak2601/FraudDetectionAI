@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Tag, Button, Card, Statistic, Row, Col, message, Badge } from 'antd';
+import { Table, Button, Row, Col, message, Badge } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertOutlined,
@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined,
   RiseOutlined,
 } from '@ant-design/icons';
-import { getRecentTransactions, createCase } from '../api/client';
+import { getRecentTransactions, createCase, getMonitoringSummary } from '../api/client';
 import LiveSimulator from '../components/LiveSimulator';
 
 interface Transaction {
@@ -24,14 +24,17 @@ interface Transaction {
 const Dashboard: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [newTxCount, setNewTxCount] = useState(0);
+  const [summary, setSummary] = useState<any>(null);
   const navigate = useNavigate();
 
   const fetchTransactions = async () => {
     try {
-      const res = await getRecentTransactions(50);
-      setTransactions(res.data);
-      setNewTxCount(c => c + 1);
+      const [recent, metrics] = await Promise.all([
+        getRecentTransactions(50),
+        getMonitoringSummary(),
+      ]);
+      setTransactions(recent.data);
+      setSummary(metrics.data);
     } catch (err) {
       message.error('Failed to load transactions. Is the backend running?');
     } finally {
@@ -52,12 +55,10 @@ const Dashboard: React.FC = () => {
     navigate(`/investigation/${txId}`);
   };
 
-  const total = transactions.length;
-  const flagged = transactions.filter(t => t.is_fraud_predicted).length;
-  const highRisk = transactions.filter(t => t.risk_level === 'HIGH' || t.risk_level === 'CRITICAL').length;
-  const avgScore = total > 0
-    ? (transactions.reduce((s, t) => s + t.fraud_score, 0) / total * 100).toFixed(1)
-    : '0';
+  const total = summary?.total_scored ?? transactions.length;
+  const flagged = summary?.flagged ?? transactions.filter(t => t.is_fraud_predicted).length;
+  const highRisk = summary?.high_risk ?? transactions.filter(t => t.risk_level === 'HIGH' || t.risk_level === 'CRITICAL').length;
+  const avgScore = summary?.avg_score?.toFixed(1) ?? '0';
 
   const columns = [
     {

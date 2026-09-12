@@ -1,4 +1,5 @@
-﻿from kafka.admin import KafkaAdminClient, NewTopic
+import os
+from kafka.admin import KafkaAdminClient, NewTopic
 from kafka.errors import TopicAlreadyExistsError
 
 TOPICS = [
@@ -8,7 +9,7 @@ TOPICS = [
 ]
 
 def create_topics():
-    admin = KafkaAdminClient(bootstrap_servers="localhost:9092")
+    admin = KafkaAdminClient(bootstrap_servers=os.getenv('KAFKA_BROKER', '127.0.0.1:9092'))
     for topic in TOPICS:
         try:
             admin.create_topics([topic])

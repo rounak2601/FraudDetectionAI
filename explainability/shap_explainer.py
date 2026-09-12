@@ -19,17 +19,15 @@ WHY TreeExplainer (not KernelExplainer):
 IMPORTANT — CATEGORICAL ENCODING:
   Uses the EXACT same encoding as scorer.py (_preprocess method)
   so SHAP values map to the correct features.
-  Categoricals are hash-encoded: abs(hash(str_val)) % 10000
+  Categoricals use the exact LabelEncoder mapping saved from training
 """
 
 import pickle
 import numpy as np
 import shap
 from typing import Any, Dict
+from models.inference.preprocessing import FeaturePreprocessor
 
-
-# Must match scorer.py exactly
-CATEGORICAL_COLS = {"ProductCD", "card4", "card6", "P_emaildomain", "R_emaildomain"}
 
 
 class SHAPExplainer:
@@ -47,6 +45,7 @@ class SHAPExplainer:
 
         with open(f"{artifacts_dir}/feature_names.pkl", "rb") as f:
             self.feature_names: list = pickle.load(f)
+        self.preprocessor = FeaturePreprocessor(self.feature_names, artifacts_dir)
 
         # TreeExplainer: exact SHAP for tree-based models
         # check_additivity=False: suppresses a harmless warning in shap 0.51
@@ -62,26 +61,7 @@ class SHAPExplainer:
     # MUST stay in sync with scorer.py
     # ──────────────────────────────────────────────────────
     def _preprocess(self, transaction: Dict[str, Any]) -> np.ndarray:
-        row = []
-        for feat in self.feature_names:
-            val = transaction.get(feat, -999)
-
-            if val is None or val == "" or (isinstance(val, float) and np.isnan(val)):
-                val = -999.0
-            elif feat in CATEGORICAL_COLS:
-                if isinstance(val, str):
-                    val = float(abs(hash(val)) % 10000)
-                else:
-                    val = float(val)
-            else:
-                try:
-                    val = float(val)
-                except (ValueError, TypeError):
-                    val = -999.0
-
-            row.append(val)
-
-        return np.array(row, dtype=np.float32).reshape(1, -1)
+        return self.preprocessor.transform(transaction)
 
     # ──────────────────────────────────────────────────────
     # Public API

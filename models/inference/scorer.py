@@ -27,6 +27,7 @@ from typing import Dict, Any
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from explainability.explainer import FraudExplainer
+from models.inference.preprocessing import FeaturePreprocessor, normalize_transaction
 
 
 @dataclass
@@ -38,6 +39,7 @@ class FraudScore:
     isolation_score:   float
     triggered_rules:   list
     explanation:       dict
+    is_fraud_predicted: bool
 
 
 class FraudScorer:
@@ -57,8 +59,11 @@ class FraudScorer:
     # Transactions scoring at or above this get full SHAP + LLM explanation
     EXPLANATION_THRESHOLD = 0.7
 
-    def __init__(self, artifacts_dir: str = "models/artifacts"):
+    def __init__(self, artifacts_dir: str | None = None):
         print("Loading FraudScorer models...")
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+        artifacts_dir = artifacts_dir or os.path.join(project_root, "models", "artifacts")
+        self.inline_explanations = os.getenv("INLINE_EXPLANATIONS", "false").lower() == "true"
 
         # ONNX runtime for XGBoost
         self.onnx_sess   = rt.InferenceSession(f"{artifacts_dir}/xgboost_model.onnx")
@@ -84,39 +89,18 @@ class FraudScorer:
             self.feature_mapping = json.load(f)
 
         self.name_to_numeric = {v: k for k, v in self.feature_mapping.items()}
+        self.preprocessor = FeaturePreprocessor(self.feature_names, artifacts_dir)
+        self.encoding_mode = self.preprocessor.encoding_mode
+        self.fraud_threshold = float(os.getenv("MODEL_FRAUD_THRESHOLD", "0.5"))
 
         # Day 5: SHAP + LLM explainer (initialised once, reused per request)
         print("Loading FraudExplainer (SHAP + LLM)...")
         self.explainer = FraudExplainer(artifacts_dir=artifacts_dir)
 
-        print(f"FraudScorer ready. Features: {len(self.feature_names)}")
+        print(f"FraudScorer ready. Features: {len(self.feature_names)}; encoding={self.encoding_mode}; threshold={self.fraud_threshold}")
 
     def _preprocess(self, transaction: Dict[str, Any]) -> np.ndarray:
-        """Convert raw transaction dict to feature vector."""
-        CATEGORICAL_COLS = {
-            "ProductCD", "card4", "card6", "P_emaildomain", "R_emaildomain"
-        }
-
-        row = []
-        for feat in self.feature_names:
-            val = transaction.get(feat, -999)
-
-            if val is None or val == "" or (isinstance(val, float) and np.isnan(val)):
-                val = -999.0
-            elif feat in CATEGORICAL_COLS:
-                if isinstance(val, str):
-                    val = float(abs(hash(val)) % 10000)
-                else:
-                    val = float(val)
-            else:
-                try:
-                    val = float(val)
-                except (ValueError, TypeError):
-                    val = -999.0
-
-            row.append(val)
-
-        return np.array(row, dtype=np.float32).reshape(1, -1)
+        return self.preprocessor.transform(transaction)
 
     def _normalize_if_score(self, raw_score: float) -> float:
         mn = self.if_stats["min"]
@@ -188,7 +172,8 @@ class FraudScorer:
         Returns FraudScore with full SHAP+LLM explanation if score >= 0.7.
         """
 
-        # 1. Preprocess
+        # 1. Normalize aliases (API `amount` -> trained feature `TransactionAmt`) and preprocess.
+        transaction = normalize_transaction(transaction)
         features_array = self._preprocess(transaction)
 
         # 2. XGBoost via ONNX
@@ -205,13 +190,12 @@ class FraudScorer:
         meta_input  = np.array([[xgb_proba, if_score]], dtype=np.float64)
         fraud_proba = self.meta_model.predict_proba(meta_input)[0][1]
 
-        # 5. Rules engine
+        # 5. Rules are evidence for analysts, not arbitrary probability boosts.
+        # A high-value legitimate payment must not be labelled fraud solely by rule count.
         triggered_rules = self._check_rules(transaction)
-        if triggered_rules:
-            fraud_proba = min(1.0, fraud_proba + 0.1 * len(triggered_rules))
 
         # 6. Explanation — full SHAP+LLM for high risk, simple for low risk
-        if fraud_proba >= self.EXPLANATION_THRESHOLD:
+        if self.inline_explanations and fraud_proba >= self.EXPLANATION_THRESHOLD:
             # Day 5: full explainability for HIGH / CRITICAL transactions
             explanation = self.explainer.explain(
                 transaction       = transaction,
@@ -236,6 +220,7 @@ class FraudScorer:
             isolation_score   = round(float(if_score), 4),
             triggered_rules   = triggered_rules,
             explanation       = explanation,
+            is_fraud_predicted = bool(fraud_proba >= self.fraud_threshold),
         )
 
     def score_batch(self, transactions: list) -> list:
@@ -243,9 +228,8 @@ class FraudScorer:
         if not transactions:
             return []
 
-        features_matrix = np.vstack([
-            self._preprocess(tx) for tx in transactions
-        ])
+        transactions = [normalize_transaction(tx) for tx in transactions]
+        features_matrix = np.vstack([self._preprocess(tx) for tx in transactions])
 
         xgb_probas = self.onnx_sess.run(
             [self.output_name],
@@ -264,12 +248,11 @@ class FraudScorer:
 
         results = []
         for i, tx in enumerate(transactions):
+            tx = normalize_transaction(tx)
             rules = self._check_rules(tx)
             prob  = float(fraud_probas[i])
-            if rules:
-                prob = min(1.0, prob + 0.1 * len(rules))
 
-            if prob >= self.EXPLANATION_THRESHOLD:
+            if self.inline_explanations and prob >= self.EXPLANATION_THRESHOLD:
                 explanation = self.explainer.explain(
                     transaction       = tx,
                     fraud_probability = prob,
@@ -294,6 +277,7 @@ class FraudScorer:
                 isolation_score   = round(float(if_scores[i]), 4),
                 triggered_rules   = rules,
                 explanation       = explanation,
+                is_fraud_predicted = bool(prob >= self.fraud_threshold),
             ))
 
         return results

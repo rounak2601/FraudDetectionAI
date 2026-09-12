@@ -2,11 +2,12 @@ import json
 import random
 import time
 import uuid
+import os
 from datetime import datetime
 from kafka import KafkaProducer
 
 producer = KafkaProducer(
-    bootstrap_servers='localhost:9092',
+    bootstrap_servers=os.getenv('KAFKA_BROKER', '127.0.0.1:9092'),
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
 

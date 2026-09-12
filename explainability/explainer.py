@@ -24,6 +24,7 @@ USAGE:
   result = explainer.explain(transaction_dict, fraud_probability=0.87)
 """
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict
 
@@ -44,6 +45,9 @@ class FraudExplainer:
         llm_host:      str = "http://localhost:11434",
     ):
         print("[FraudExplainer] Initialising...")
+        if not os.path.isabs(artifacts_dir):
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            artifacts_dir = os.path.join(project_root, artifacts_dir)
         self.shap_explainer = SHAPExplainer(artifacts_dir=artifacts_dir)
         self.llm_explainer  = LLMExplainer(model=llm_model, host=llm_host)
         print("[FraudExplainer] Ready.")

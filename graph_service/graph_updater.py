@@ -1,5 +1,6 @@
 import json
 import time
+import os
 from kafka import KafkaConsumer
 from neo4j_client import Neo4jClient
 
@@ -8,7 +9,7 @@ def start_graph_updater():
 
     consumer = KafkaConsumer(
         'enriched_transactions',
-        bootstrap_servers='localhost:9092',
+        bootstrap_servers=os.getenv('KAFKA_BROKER', '127.0.0.1:9092'),
         value_deserializer=lambda m: json.loads(m.decode('utf-8')),
         auto_offset_reset='earliest',
         group_id='graph-updater-group',

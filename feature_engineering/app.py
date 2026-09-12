@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import sys
 import os
@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from velocity_features import compute_velocity_features
 from behavioral_features import compute_behavioral_features
 
-KAFKA_BROKER = 'localhost:9092'
+KAFKA_BROKER = os.getenv('KAFKA_BROKER', '127.0.0.1:9092')
 
 async def run():
     consumer = AIOKafkaConsumer(

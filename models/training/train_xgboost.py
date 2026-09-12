@@ -35,10 +35,12 @@ X = df[features].copy()
 y = df[target].copy()
 
 print("Step 3: Encoding categorical columns...")
+categorical_encoders = {}
 for col in X.select_dtypes(include='object').columns:
     le = LabelEncoder()
     X[col] = X[col].astype(str)
     X[col] = le.fit_transform(X[col])
+    categorical_encoders[col] = [str(value) for value in le.classes_.tolist()]
 
 print("Step 4: Filling missing values...")
 X = X.fillna(-999)
@@ -97,6 +99,11 @@ feature_names_path = "models/artifacts/feature_names.pkl"
 with open(feature_names_path, "wb") as f:
     pickle.dump(features, f)
 
+import json
+with open("models/artifacts/categorical_encoders.json", "w") as f:
+    json.dump(categorical_encoders, f, indent=2)
+
+print("Categorical encoders saved to models/artifacts/categorical_encoders.json")
 print("Model saved to models/artifacts/xgboost_model.pkl")
 print("Feature names saved to models/artifacts/feature_names.pkl")
 print(f"\nDay 4 Step 1 complete. AUC: {auc:.4f}")

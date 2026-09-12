@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Layout, Menu } from 'antd';
 import {
@@ -11,12 +11,36 @@ import Investigation from './pages/Investigation';
 import Monitoring from './pages/Monitoring';
 import Landing from './pages/Landing';
 import Logo from './components/Logo';
+import { getModelHealth } from './api/client';
 
 const { Sider, Content, Header } = Layout;
 
 const App: React.FC = () => {
   const location = useLocation();
+  const [systemOnline, setSystemOnline] = useState(false);
+  const [modelsActive, setModelsActive] = useState(0);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
 
+  useEffect(() => {
+    const checkHealth = async () => {
+      const started = performance.now();
+      try {
+        const response = await getModelHealth();
+        setSystemOnline(response.data.status === 'healthy');
+        setModelsActive(response.data.models_active || 0);
+        setLatencyMs(Math.round(performance.now() - started));
+      } catch {
+        setSystemOnline(false);
+        setModelsActive(0);
+        setLatencyMs(null);
+      }
+    };
+    checkHealth();
+    const timer = setInterval(checkHealth, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const statusColor = systemOnline ? '#3fb950' : '#f85149';
   const menuItems = [
     {
       key: '/',
@@ -73,12 +97,12 @@ const App: React.FC = () => {
             width: '6px',
             height: '6px',
             borderRadius: '50%',
-            background: '#3fb950',
-            boxShadow: '0 0 6px #3fb950',
+            background: statusColor,
+            boxShadow: `0 0 6px ${statusColor}`,
             animation: 'glow 2s infinite'
           }} />
-          <span style={{ color: '#3fb950', fontSize: '11px', fontWeight: '600' }}>
-            SYSTEM ONLINE
+          <span style={{ color: statusColor, fontSize: '11px', fontWeight: '600' }}>
+            {systemOnline ? 'SYSTEM ONLINE' : 'SYSTEM OFFLINE'}
           </span>
         </div>
 
@@ -108,7 +132,7 @@ const App: React.FC = () => {
             MODEL VERSION
           </div>
           <div style={{ color: '#58a6ff', fontSize: '11px', fontWeight: '600' }}>
-            XGBoost + GNN v2.1
+            XGBoost + IF v2.2
           </div>
           <div style={{ color: '#8b949e', fontSize: '10px', marginTop: '4px' }}>
             Trained on IEEE-CIS Dataset
@@ -136,18 +160,18 @@ const App: React.FC = () => {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <span style={{ color: '#8b949e', fontSize: '12px' }}>
-              Latency: <span style={{ color: '#3fb950' }}>~50ms</span>
+              Latency: <span style={{ color: statusColor }}>{latencyMs === null ? 'N/A' : `${latencyMs}ms`}</span>
             </span>
             <span style={{ color: '#8b949e', fontSize: '12px' }}>
-              Models: <span style={{ color: '#58a6ff' }}>3 Active</span>
+              Models: <span style={{ color: '#58a6ff' }}>{modelsActive} Active</span>
             </span>
             <div style={{
-              color: '#3fb950',
+              color: statusColor,
               fontSize: '11px',
-              background: '#0a1e0a',
+              background: systemOnline ? '#0a1e0a' : '#2e1a1a',
               padding: '4px 12px',
               borderRadius: '12px',
-              border: '1px solid #3fb950',
+              border: `1px solid ${statusColor}`,
               display: 'flex',
               alignItems: 'center',
               gap: '6px'
@@ -156,10 +180,10 @@ const App: React.FC = () => {
                 width: '6px',
                 height: '6px',
                 borderRadius: '50%',
-                background: '#3fb950',
+                background: statusColor,
                 display: 'inline-block',
               }}/>
-              LIVE
+              {systemOnline ? 'LIVE' : 'OFFLINE'}
             </div>
           </div>
         </Header>
